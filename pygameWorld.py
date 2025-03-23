@@ -32,36 +32,39 @@ class GameObject:
     x: float
     y: float
     color: tuple
+    shape: str  # 'circle', 'triangle', 'square', 'pentagon'
     interactions: Dict[str, str]
     
     def contains_point(self, point_x: float, point_y: float) -> bool:
         """Check if the given point is within the object's bounds"""
-        if self.object_type == "Living":
-            # For triangles, use a simple radius check for simplicity
-            radius = 15
-            dx = point_x - self.x
-            dy = point_y - self.y
-            return (dx * dx + dy * dy) <= (radius * radius)
-        else:
-            # For circles, use radius check
-            radius = 15
-            dx = point_x - self.x
-            dy = point_y - self.y
-            return (dx * dx + dy * dy) <= (radius * radius)
+        radius = 15
+        dx = point_x - self.x
+        dy = point_y - self.y
+        return (dx * dx + dy * dy) <= (radius * radius)
     
     def draw(self, screen):
-        if self.object_type == "Living":
-            # Draw living objects as triangles
-            radius = 15
+        radius = 15
+        if self.shape == "triangle":
             points = [
                 (self.x, self.y - radius),
                 (self.x - radius, self.y + radius),
                 (self.x + radius, self.y + radius)
             ]
             pygame.draw.polygon(screen, self.color, points)
-        else:
-            # Draw non-living objects as circles
-            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), 15)
+        elif self.shape == "square":
+            rect = pygame.Rect(self.x - radius, self.y - radius, radius * 2, radius * 2)
+            pygame.draw.rect(screen, self.color, rect)
+        elif self.shape == "pentagon":
+            points = []
+            for i in range(5):
+                angle = math.radians(i * 72 - 90)
+                points.append((
+                    self.x + radius * math.cos(angle),
+                    self.y + radius * math.sin(angle)
+                ))
+            pygame.draw.polygon(screen, self.color, points)
+        else:  # Default to circle
+            pygame.draw.circle(screen, self.color, (int(self.x), int(self.y)), radius)
         
         # Draw name above object
         font = pygame.font.Font(None, 24)
@@ -77,6 +80,7 @@ class AIAgent:
         self.speed = 2
         self.current_text = ""
         self.text_timer = 0
+        self.stopping_distance = 50  # Distance at which AI stops from target
         
     def move_towards(self, target_obj: GameObject):
         self.target_x = target_obj.x
@@ -87,9 +91,12 @@ class AIAgent:
         dy = self.target_y - self.y
         distance = math.sqrt(dx * dx + dy * dy)
         
-        if distance > self.speed:
-            self.x += (dx / distance) * self.speed
-            self.y += (dy / distance) * self.speed
+        # Only move if we're further than the stopping distance
+        if distance > self.stopping_distance:
+            # Calculate movement while maintaining speed
+            move_distance = min(self.speed, distance - self.stopping_distance)
+            self.x += (dx / distance) * move_distance
+            self.y += (dy / distance) * move_distance
             
         if self.text_timer > 0:
             self.text_timer -= 1
@@ -136,6 +143,10 @@ class WorldGUI:
         self.drag_offset_x = 0
         self.drag_offset_y = 0
         
+        # Add double click tracking
+        self.last_click_time = 0
+        self.last_clicked_object = None
+        
         # Initialize Pygame in a separate thread
         self.pygame_queue = Queue()
         self.pygame_thread = threading.Thread(target=self.run_pygame)
@@ -174,6 +185,7 @@ class WorldGUI:
         self.interaction_controls = ttk.Frame(self.main_container)
         self.interaction_controls.pack(fill=tk.X, pady=5)
         ttk.Button(self.interaction_controls, text="Add Interaction", command=self.show_add_interaction_dialog).pack(side=tk.LEFT)
+        ttk.Button(self.interaction_controls, text="Remove Interaction", command=self.remove_interaction).pack(side=tk.LEFT)
         ttk.Button(self.interaction_controls, text="Send to AI", command=self.send_to_ai).pack(side=tk.LEFT)
         
         # AI Action History
@@ -182,16 +194,38 @@ class WorldGUI:
         self.action_text.pack(fill=tk.BOTH, expand=True, pady=5)
         self.action_text.config(state=tk.DISABLED)  # Make read-only
         
+        # Close button frame
+        close_frame = ttk.Frame(self.main_container)
+        close_frame.pack(fill=tk.X, pady=10)
+        ttk.Button(close_frame, text="Close Program", command=self.close_program, style="Accent.TButton").pack(anchor=tk.CENTER)
+        
+        # Create custom style for the close button
+        style = ttk.Style()
+        style.configure("Accent.TButton", 
+                       padding=10,
+                       font=("TkDefaultFont", 10, "bold"))
+        
+        # Define available shapes and colors
+        self.available_shapes = ["circle", "triangle", "square", "pentagon"]
+        self.available_colors = [
+            ("Red", (255, 0, 0)),
+            ("Green", (0, 255, 0)),
+            ("Blue", (0, 0, 255)),
+            ("Yellow", (255, 255, 0)),
+            ("Orange", (255, 165, 0)),
+            ("Purple", (128, 0, 128)),
+            ("Pink", (255, 192, 203)),
+            ("Cyan", (0, 255, 255))
+        ]
+        
         self.update_lists()
 
     def generate_random_position(self):
+        """Generate a random position within the current window bounds"""
         import random
-        return random.randint(50, 750), random.randint(50, 550)
-
-    def generate_object_color(self, object_type: str):
-        if object_type == "Living":
-            return (0, 255, 0)  # Green for living objects
-        return (255, 165, 0)    # Orange for non-living objects
+        # Get current window size
+        window_size = pygame.display.get_surface().get_size()
+        return random.randint(50, window_size[0] - 50), random.randint(50, window_size[1] - 50)
 
     def update_lists(self):
         # Update objects listbox
@@ -207,7 +241,7 @@ class WorldGUI:
     def show_add_object_dialog(self):
         dialog = tk.Toplevel(self.root)
         dialog.title("Add New Object")
-        dialog.geometry("400x500")  # Increased height
+        dialog.geometry("400x600")  # Increased height for new controls
         
         # Make dialog modal
         dialog.transient(self.root)
@@ -229,6 +263,22 @@ class WorldGUI:
         type_var = tk.StringVar(value="Living")
         ttk.Radiobutton(type_frame, text="Living", variable=type_var, value="Living").pack(side=tk.LEFT, padx=20, pady=5)
         ttk.Radiobutton(type_frame, text="NonLiving", variable=type_var, value="NonLiving").pack(side=tk.LEFT, padx=20, pady=5)
+        
+        # Shape section
+        shape_frame = ttk.LabelFrame(container, text="Shape", padding="5")
+        shape_frame.pack(fill=tk.X, pady=(0, 10))
+        shape_var = tk.StringVar(value="circle")
+        for shape in self.available_shapes:
+            ttk.Radiobutton(shape_frame, text=shape.capitalize(), 
+                          variable=shape_var, value=shape).pack(side=tk.LEFT, padx=10)
+        
+        # Color section
+        color_frame = ttk.LabelFrame(container, text="Color", padding="5")
+        color_frame.pack(fill=tk.X, pady=(0, 10))
+        color_var = tk.StringVar(value="Green")
+        for color_name, _ in self.available_colors:
+            ttk.Radiobutton(color_frame, text=color_name, 
+                          variable=color_var, value=color_name).pack(side=tk.LEFT, padx=5)
         
         # Interactions section
         interactions_frame = ttk.LabelFrame(container, text="Interactions", padding="5")
@@ -290,6 +340,19 @@ class WorldGUI:
         int_button_frame = ttk.Frame(interactions_frame)
         int_button_frame.pack(fill=tk.X, pady=5)
         ttk.Button(int_button_frame, text="Add Interaction", command=add_interaction).pack(side=tk.LEFT, padx=5)
+        ttk.Button(int_button_frame, text="Remove Interaction", command=lambda: remove_object_interaction()).pack(side=tk.LEFT, padx=5)
+        
+        def remove_object_interaction():
+            selection = interactions_listbox.curselection()
+            if selection:
+                index = selection[0]
+                selected_item = interactions_listbox.get(index)
+                interaction_name = selected_item.split(":")[0].strip()
+                if interaction_name in interactions:
+                    del interactions[interaction_name]
+                    interactions_listbox.delete(0, tk.END)
+                    for k, v in interactions.items():
+                        interactions_listbox.insert(tk.END, f"{k}: {v}")
         
         # Main dialog buttons frame
         button_frame = ttk.Frame(container)
@@ -300,7 +363,9 @@ class WorldGUI:
             obj_type = type_var.get()
             if name and obj_type:
                 x, y = self.generate_random_position()
-                color = self.generate_object_color(obj_type)
+                # Get color tuple from selected color name
+                color = next(color_tuple for name, color_tuple in self.available_colors 
+                           if name == color_var.get())
                 
                 new_object: Object = {
                     "name": name,
@@ -314,6 +379,7 @@ class WorldGUI:
                     x=x,
                     y=y,
                     color=color,
+                    shape=shape_var.get(),
                     interactions=interactions
                 )
                 
@@ -391,6 +457,14 @@ class WorldGUI:
         ttk.Button(button_frame, text="Save", command=save_interaction).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="Cancel", command=cancel_interaction).pack(side=tk.LEFT, padx=5)
 
+    def remove_interaction(self):
+        """Remove the selected interaction from the interactions list"""
+        selection = self.interactions_listbox.curselection()
+        if selection:
+            index = selection[0]
+            self.interactions.pop(index)
+            self.update_lists()
+
     async def _send_to_ai(self):
         data = {
             "objects": self.objects,
@@ -444,25 +518,229 @@ class WorldGUI:
         self.root.destroy()  # Destroy the window
         pygame.quit()  # Quit pygame
         
+    def show_edit_object_dialog(self, game_object: GameObject, object_index: int):
+        dialog = tk.Toplevel(self.root)
+        dialog.title("Edit Object")
+        dialog.geometry("400x600")  # Increased height for new controls
+        
+        # Make dialog modal
+        dialog.transient(self.root)
+        dialog.grab_set()
+        
+        # Main container with padding
+        container = ttk.Frame(dialog, padding="10")
+        container.pack(fill=tk.BOTH, expand=True)
+        
+        # Name section
+        name_frame = ttk.LabelFrame(container, text="Object Name", padding="5")
+        name_frame.pack(fill=tk.X, pady=(0, 10))
+        name_entry = ttk.Entry(name_frame)
+        name_entry.insert(0, game_object.name)  # Pre-fill name
+        name_entry.pack(fill=tk.X, padx=5, pady=5)
+        
+        # Type section
+        type_frame = ttk.LabelFrame(container, text="Object Type", padding="5")
+        type_frame.pack(fill=tk.X, pady=(0, 10))
+        type_var = tk.StringVar(value=game_object.object_type)  # Pre-fill type
+        ttk.Radiobutton(type_frame, text="Living", variable=type_var, value="Living").pack(side=tk.LEFT, padx=20, pady=5)
+        ttk.Radiobutton(type_frame, text="NonLiving", variable=type_var, value="NonLiving").pack(side=tk.LEFT, padx=20, pady=5)
+        
+        # Shape section
+        shape_frame = ttk.LabelFrame(container, text="Shape", padding="5")
+        shape_frame.pack(fill=tk.X, pady=(0, 10))
+        shape_var = tk.StringVar(value=game_object.shape)  # Pre-fill shape
+        for shape in self.available_shapes:
+            ttk.Radiobutton(shape_frame, text=shape.capitalize(), 
+                          variable=shape_var, value=shape).pack(side=tk.LEFT, padx=10)
+        
+        # Color section
+        color_frame = ttk.LabelFrame(container, text="Color", padding="5")
+        color_frame.pack(fill=tk.X, pady=(0, 10))
+        # Find the color name from the tuple
+        current_color_name = next(name for name, color_tuple in self.available_colors 
+                                if color_tuple == game_object.color)
+        color_var = tk.StringVar(value=current_color_name)
+        for color_name, _ in self.available_colors:
+            ttk.Radiobutton(color_frame, text=color_name, 
+                          variable=color_var, value=color_name).pack(side=tk.LEFT, padx=5)
+        
+        # Interactions section
+        interactions_frame = ttk.LabelFrame(container, text="Interactions", padding="5")
+        interactions_frame.pack(fill=tk.BOTH, expand=True, pady=(0, 10))
+        
+        interactions: Dict[str, str] = game_object.interactions.copy()  # Copy existing interactions
+        interactions_listbox = tk.Listbox(interactions_frame, height=8)
+        interactions_listbox.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
+        
+        # Pre-fill interactions listbox
+        for k, v in interactions.items():
+            interactions_listbox.insert(tk.END, f"{k}: {v}")
+        
+        # Scrollbar for interactions listbox
+        scrollbar = ttk.Scrollbar(interactions_frame, orient="vertical", command=interactions_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        interactions_listbox.configure(yscrollcommand=scrollbar.set)
+        
+        def add_interaction():
+            interaction_dialog = tk.Toplevel(dialog)
+            interaction_dialog.title("Add Interaction")
+            interaction_dialog.geometry("350x250")
+            interaction_dialog.transient(dialog)
+            interaction_dialog.grab_set()
+            
+            # Container with padding
+            int_container = ttk.Frame(interaction_dialog, padding="10")
+            int_container.pack(fill=tk.BOTH, expand=True)
+            
+            # Name field
+            name_frame = ttk.LabelFrame(int_container, text="Interaction Name", padding="5")
+            name_frame.pack(fill=tk.X, pady=(0, 10))
+            int_name_entry = ttk.Entry(name_frame)
+            int_name_entry.pack(fill=tk.X, padx=5, pady=5)
+            
+            # Description field
+            desc_frame = ttk.LabelFrame(int_container, text="Description", padding="5")
+            desc_frame.pack(fill=tk.X, pady=(0, 10))
+            int_desc_entry = ttk.Entry(desc_frame)
+            int_desc_entry.pack(fill=tk.X, padx=5, pady=5)
+            
+            # Buttons frame
+            button_frame = ttk.Frame(int_container)
+            button_frame.pack(fill=tk.X, pady=(10, 0))
+            
+            def save_interaction():
+                name = int_name_entry.get()
+                desc = int_desc_entry.get()
+                if name and desc:
+                    interactions[name] = desc
+                    interactions_listbox.delete(0, tk.END)
+                    for k, v in interactions.items():
+                        interactions_listbox.insert(tk.END, f"{k}: {v}")
+                interaction_dialog.destroy()
+            
+            def cancel_interaction():
+                interaction_dialog.destroy()
+            
+            ttk.Button(button_frame, text="Save", command=save_interaction).pack(side=tk.LEFT, padx=5)
+            ttk.Button(button_frame, text="Cancel", command=cancel_interaction).pack(side=tk.LEFT, padx=5)
+        
+        # Interaction buttons frame
+        int_button_frame = ttk.Frame(interactions_frame)
+        int_button_frame.pack(fill=tk.X, pady=5)
+        ttk.Button(int_button_frame, text="Add Interaction", command=add_interaction).pack(side=tk.LEFT, padx=5)
+        ttk.Button(int_button_frame, text="Remove Interaction", command=lambda: remove_object_interaction()).pack(side=tk.LEFT, padx=5)
+        
+        def remove_object_interaction():
+            selection = interactions_listbox.curselection()
+            if selection:
+                index = selection[0]
+                selected_item = interactions_listbox.get(index)
+                interaction_name = selected_item.split(":")[0].strip()
+                if interaction_name in interactions:
+                    del interactions[interaction_name]
+                    interactions_listbox.delete(0, tk.END)
+                    for k, v in interactions.items():
+                        interactions_listbox.insert(tk.END, f"{k}: {v}")
+        
+        # Main dialog buttons frame
+        button_frame = ttk.Frame(container)
+        button_frame.pack(fill=tk.X, pady=(10, 0))
+        
+        def save_object():
+            name = name_entry.get()
+            obj_type = type_var.get()
+            if name and obj_type:
+                # Get color tuple from selected color name
+                color = next(color_tuple for name, color_tuple in self.available_colors 
+                           if name == color_var.get())
+                
+                # Update the existing objects
+                self.objects[object_index].update({
+                    "name": name,
+                    "object_type": obj_type,
+                    "interactions": interactions
+                })
+                
+                # Update game object
+                game_object.name = name
+                game_object.object_type = obj_type
+                game_object.interactions = interactions
+                game_object.color = color
+                game_object.shape = shape_var.get()
+                
+                self.update_lists()
+                dialog.destroy()
+        
+        def cancel_object():
+            dialog.destroy()
+        
+        ttk.Button(button_frame, text="Save", command=save_object).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="Cancel", command=cancel_object).pack(side=tk.LEFT, padx=5)
+
+    def close_program(self):
+        """Gracefully close the program with confirmation"""
+        if messagebox.askokcancel("Close Program", "Are you sure you want to close the program?"):
+            self.on_closing()
+
     def run_pygame(self):
         pygame.init()
-        screen = pygame.display.set_mode((800, 600))
+        screen = pygame.display.set_mode((800, 600), pygame.RESIZABLE)
         pygame.display.set_caption("World Simulation")
         clock = pygame.time.Clock()
+        
+        # Track window size
+        window_width = 800
+        window_height = 600
         
         while self.running:
             for event in pygame.event.get():
                 if event.type == pygame.QUIT:
                     self.running = False
-                    self.root.quit()  # Stop tkinter mainloop
+                    self.root.quit()
                     break
+                elif event.type == pygame.VIDEORESIZE:
+                    # Handle window resize
+                    old_width = window_width
+                    old_height = window_height
+                    window_width = event.w
+                    window_height = event.h
+                    screen = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
+                    
+                    # Scale object positions to maintain relative positions
+                    scale_x = window_width / old_width
+                    scale_y = window_height / old_height
+                    for obj in self.game_objects:
+                        obj.x *= scale_x
+                        obj.y *= scale_y
+                    
+                    # Scale AI position
+                    self.ai_agent.x *= scale_x
+                    self.ai_agent.y *= scale_y
+                    self.ai_agent.target_x *= scale_x
+                    self.ai_agent.target_y *= scale_y
+                    
                 elif event.type == pygame.MOUSEBUTTONDOWN:
                     if event.button == 1:  # Left mouse button
+                        current_time = time.time()
                         mouse_x, mouse_y = event.pos
-                        # Check if clicked on any object
+                        
+                        # Check for double click
+                        if (current_time - self.last_click_time) < 0.4:  # 400ms for double click
+                            # Check if clicked on the same object
+                            for i, obj in enumerate(self.game_objects):
+                                if obj == self.last_clicked_object and obj.contains_point(mouse_x, mouse_y):
+                                    # Open edit dialog
+                                    self.show_edit_object_dialog(obj, i)
+                                    break
+                        
+                        # Update last click info
+                        self.last_click_time = current_time
+                        
+                        # Check for dragging
                         for obj in self.game_objects:
                             if obj.contains_point(mouse_x, mouse_y):
                                 self.dragged_object = obj
+                                self.last_clicked_object = obj
                                 self.drag_offset_x = obj.x - mouse_x
                                 self.drag_offset_y = obj.y - mouse_y
                                 break
@@ -478,8 +756,8 @@ class WorldGUI:
                         
                         # Constrain to screen bounds with padding
                         padding = 30  # Enough to keep object and name visible
-                        new_x = max(padding, min(800 - padding, new_x))
-                        new_y = max(padding, min(600 - padding, new_y))
+                        new_x = max(padding, min(window_width - padding, new_x))
+                        new_y = max(padding, min(window_height - padding, new_y))
                         
                         self.dragged_object.x = new_x
                         self.dragged_object.y = new_y
