@@ -3,7 +3,6 @@ from tkinter import ttk, messagebox
 from typing import Dict, List, TypedDict, Optional
 from AIControl import transmitAndPost
 import asyncio
-import json
 
 class Object(TypedDict):
     name: str

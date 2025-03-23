@@ -34,6 +34,21 @@ class GameObject:
     color: tuple
     interactions: Dict[str, str]
     
+    def contains_point(self, point_x: float, point_y: float) -> bool:
+        """Check if the given point is within the object's bounds"""
+        if self.object_type == "Living":
+            # For triangles, use a simple radius check for simplicity
+            radius = 15
+            dx = point_x - self.x
+            dy = point_y - self.y
+            return (dx * dx + dy * dy) <= (radius * radius)
+        else:
+            # For circles, use radius check
+            radius = 15
+            dx = point_x - self.x
+            dy = point_y - self.y
+            return (dx * dx + dy * dy) <= (radius * radius)
+    
     def draw(self, screen):
         if self.object_type == "Living":
             # Draw living objects as triangles
@@ -115,6 +130,11 @@ class WorldGUI:
         
         # Add running flag for clean shutdown
         self.running = True
+        
+        # Add dragging state
+        self.dragged_object = None
+        self.drag_offset_x = 0
+        self.drag_offset_y = 0
         
         # Initialize Pygame in a separate thread
         self.pygame_queue = Queue()
@@ -436,6 +456,33 @@ class WorldGUI:
                     self.running = False
                     self.root.quit()  # Stop tkinter mainloop
                     break
+                elif event.type == pygame.MOUSEBUTTONDOWN:
+                    if event.button == 1:  # Left mouse button
+                        mouse_x, mouse_y = event.pos
+                        # Check if clicked on any object
+                        for obj in self.game_objects:
+                            if obj.contains_point(mouse_x, mouse_y):
+                                self.dragged_object = obj
+                                self.drag_offset_x = obj.x - mouse_x
+                                self.drag_offset_y = obj.y - mouse_y
+                                break
+                elif event.type == pygame.MOUSEBUTTONUP:
+                    if event.button == 1:  # Left mouse button
+                        self.dragged_object = None
+                elif event.type == pygame.MOUSEMOTION:
+                    if self.dragged_object is not None:
+                        # Update object position, keeping it within screen bounds
+                        mouse_x, mouse_y = event.pos
+                        new_x = mouse_x + self.drag_offset_x
+                        new_y = mouse_y + self.drag_offset_y
+                        
+                        # Constrain to screen bounds with padding
+                        padding = 30  # Enough to keep object and name visible
+                        new_x = max(padding, min(800 - padding, new_x))
+                        new_y = max(padding, min(600 - padding, new_y))
+                        
+                        self.dragged_object.x = new_x
+                        self.dragged_object.y = new_y
             
             if not self.running:
                 break

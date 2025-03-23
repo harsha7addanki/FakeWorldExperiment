@@ -1,6 +1,4 @@
-from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv; load_dotenv()
-from fastapi import Request
 from google import genai
 import asyncio
 import json
